@@ -20,12 +20,8 @@
 -define(TIMEOUT, 10000).
 
 
--ifdef(DEBUG).
+-define(LOG(Msg), io:format(Msg)).
 -define(LOG(Msg, Args), io:format(Msg, Args)).
--else.
--define(LOG(Msg, Args), io:format(Msg, Args)).
-%-define(LOG(Msg, Args), true).
--endif.
 
 -define(SOCK_OPTIONS,
         [binary,
@@ -129,42 +125,90 @@ start_process() ->
 
 
 start_process(Client) ->
-    case gen_tcp:recv(Client, 1) of
-        {ok, Data} ->
-            parse_address(Client, Data);
-        {error, _Error} ->
-            ?LOG("start recv client error: ~p~n", [_Error]),
-            gen_tcp:close(Client)
-    end,
-    ok.
+    try
+        parse_version(Client)
+    catch
+        E:R ->
+            ?LOG("EXCEPTION ~p:~p (~p)~n",[E,R,erlang:get_stacktrace()])
+    after
+        gen_tcp:close(Client)
+    end.
 
+parse_version(Sock) ->
+    {ok, <<4>>} = gen_tcp:recv(Sock, 1),
+    ?LOG("vsn 4~n"),
+    parse_command(Sock).
 
-parse_address(Client, AType) when AType =:= <<?IPV4>> ->
-    {ok, Data} = gen_tcp:recv(Client, 6),
-    <<_,Port:16, Destination/binary>> = Data,
-    Address = list_to_tuple( binary_to_list(Destination) ),
-    communicate(Client, Address, Port);
+parse_command(Sock) ->
+    ?LOG("cmd ~n"),
+    {ok, <<1>>} = gen_tcp:recv(Sock, 1), % only support stream conns
+    parse_port(Sock).
 
-parse_address(Client, AType) when AType =:= <<?IPV6>> ->
-    {ok, Data} = gen_tcp:recv(Client, 18),
-    <<_,Port:16, Destination/binary>> = Data,
-    Address = list_to_tuple( binary_to_list(Destination) ),
-    communicate(Client, Address, Port);
+parse_port(Sock) ->
+    ?LOG("port ~n"),
+    {ok, <<Port:16/big>>} = gen_tcp:recv(Sock,2),
+    parse_invalid_ip(Sock, Port).
 
-parse_address(Client, AType) when AType =:= <<?DOMAIN>> ->
-    {ok, Data} = gen_tcp:recv(Client, 3),
-    <<Port:16, DomainLen:8>> = Data,
+parse_invalid_ip(Sock, Port) ->
+    ?LOG("fake ip~n"),
+    {ok, <<0,0,0,Other>>} = gen_tcp:recv(Sock, 4),
+    true = Other =/= 0,
+    parse_user_id(Sock, Port, <<>>).
 
-    {ok, DataRest} = gen_tcp:recv(Client, DomainLen),
-    Destination = DataRest,
+parse_user_id(Sock, Port, UserId) ->
+    ?LOG("uid (iter)~n"),
+    case gen_tcp:recv(Sock, 1) of
+        {ok, <<0>>} -> parse_domain(Sock, Port, UserId, <<>>);
+        {ok, Byte} -> parse_user_id(Sock, Port, <<UserId/binary, Byte>>)
+    end.
 
-    Address = binary_to_list(Destination),
-    communicate(Client, Address, Port);
+parse_domain(Sock, Port, UserId, Host) ->
+    case gen_tcp:recv(Sock, 1) of
+        {ok, <<0>>} ->
+            ?LOG("0-host~n"),
+            StrHost = binary_to_list(Host),
+            ?LOG("Host Resolve: ~p -> ~p~n",[Host, catch inet:getaddr(StrHost, inet)]),
+            {ok, {A,B,C,D}} = inet:getaddr(StrHost, inet),
+            Response = <<0,16#5a/big-integer,Port:16/big,A/big,B/big,C/big,D/big>>,
+            ?LOG("Response: ~p -> ~p~n", [Sock, Response]),
+            gen_tcp:send(Sock, Response),
+            communicate(Sock, StrHost, Port);
+        {ok, Byte} ->
+            parse_domain(Sock, Port, UserId, <<Host/binary, Byte/binary>>)
+    end.
 
-parse_address(Client, _AType) ->
-    %% receive the invalid data. close the connection
-    ?LOG("Invalid data!~n", []),
-    gen_tcp:close(Client).
+%        {error, _Error} ->
+%            ?LOG("start Sock4 recv client error: ~p~n", [_Error]),
+%            gen_tcp:close(Client)
+%    end,
+%    ok.
+
+%parse_address(Client, AType) when AType =:= <<?IPV4>> ->
+%    {ok, Data} = gen_tcp:recv(Client, 6),
+%    <<_,Port:16,_FakeIp:4, 0, Destination/binary>> = Data,
+%    Address = list_to_tuple( binary_to_list(Destination) ),
+%    communicate(Client, Address, Port);
+%
+%parse_address(Client, AType) when AType =:= <<?IPV6>> ->
+%    {ok, Data} = gen_tcp:recv(Client, 18),
+%    <<_,Port:16, _FakeIp:4, 0, Destination/binary>> = Data,
+%    Address = list_to_tuple( binary_to_list(Destination) ),
+%    communicate(Client, Address, Port);
+%
+%parse_address(Client, AType) when AType =:= <<?DOMAIN>> ->
+%    {ok, Data} = gen_tcp:recv(Client, 3),
+%    <<Port:16, DomainLen:8>> = Data,
+%
+%    {ok, DataRest} = gen_tcp:recv(Client, DomainLen),
+%    Destination = DataRest,
+%
+%    Address = binary_to_list(Destination),
+%    communicate(Client, Address, Port);
+%
+%parse_address(Client, _AType) ->
+%    %% receive the invalid data. close the connection
+%    ?LOG("Invalid data!~n", []),
+%    gen_tcp:close(Client).
 
 %<<4,1,1,187,0,0,0,1,0,97,117,115,51,46,109,111,122,105,108,108,97,46,111,114,103,0>>
 
