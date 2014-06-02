@@ -131,7 +131,7 @@ start_process() ->
 start_process(Client) ->
     case gen_tcp:recv(Client, 1) of
         {ok, Data} ->
-            parse_address(Client, proxy_transform:transform(Data));
+            parse_address(Client, Data);
         {error, _Error} ->
             ?LOG("start recv client error: ~p~n", [_Error]),
             gen_tcp:close(Client)
@@ -141,22 +141,22 @@ start_process(Client) ->
 
 parse_address(Client, AType) when AType =:= <<?IPV4>> ->
     {ok, Data} = gen_tcp:recv(Client, 6),
-    <<Port:16, Destination/binary>> = proxy_transform:transform(Data),
+    <<_,Port:16, Destination/binary>> = Data,
     Address = list_to_tuple( binary_to_list(Destination) ),
     communicate(Client, Address, Port);
 
 parse_address(Client, AType) when AType =:= <<?IPV6>> ->
     {ok, Data} = gen_tcp:recv(Client, 18),
-    <<Port:16, Destination/binary>> = proxy_transform:transform(Data),
+    <<_,Port:16, Destination/binary>> = Data,
     Address = list_to_tuple( binary_to_list(Destination) ),
     communicate(Client, Address, Port);
 
 parse_address(Client, AType) when AType =:= <<?DOMAIN>> ->
     {ok, Data} = gen_tcp:recv(Client, 3),
-    <<Port:16, DomainLen:8>> = proxy_transform:transform(Data),
+    <<Port:16, DomainLen:8>> = Data,
 
     {ok, DataRest} = gen_tcp:recv(Client, DomainLen),
-    Destination = proxy_transform:transform(DataRest),
+    Destination = DataRest,
 
     Address = binary_to_list(Destination),
     communicate(Client, Address, Port);
@@ -166,6 +166,7 @@ parse_address(Client, _AType) ->
     ?LOG("Invalid data!~n", []),
     gen_tcp:close(Client).
 
+%<<4,1,1,187,0,0,0,1,0,97,117,115,51,46,109,111,122,105,108,108,97,46,111,114,103,0>>
 
 communicate(Client, Address, Port) ->
     ?LOG("Address: ~p, Port: ~p~n", [Address, Port]),
@@ -196,7 +197,7 @@ transfer(Client, Remote) ->
     inet:setopts(Client, [{active, once}]),
     receive
         {tcp, Client, Request} ->
-            case gen_tcp:send(Remote, proxy_transform:transform(Request)) of
+            case gen_tcp:send(Remote, Request) of
                 ok ->
                     transfer(Client, Remote);
                 {error, _Error} ->
@@ -204,7 +205,7 @@ transfer(Client, Remote) ->
             end;
         {tcp, Remote, Response} ->
             %% client maybe close the connection when data transferring
-            case gen_tcp:send(Client, proxy_transform:transform(Response)) of
+            case gen_tcp:send(Client, Response) of
                 ok ->
                     transfer(Client, Remote);
                 {error, _Error} ->
