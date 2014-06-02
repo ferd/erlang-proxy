@@ -23,7 +23,8 @@
 -ifdef(DEBUG).
 -define(LOG(Msg, Args), io:format(Msg, Args)).
 -else.
--define(LOG(Msg, Args), true).
+-define(LOG(Msg, Args), io:format(Msg, Args)).
+%-define(LOG(Msg, Args), true).
 -endif.
 
 -define(SOCK_OPTIONS,
@@ -40,7 +41,9 @@ start() ->
     ListenPort = proplists:get_value(listen_port, Conf, 0),
     ListenIP = proplists:get_value(listen_ip, Conf, {0,0,0,0}),
     {ok, Socket} = gen_tcp:listen(ListenPort, [{ip, ListenIP} | ?SOCK_OPTIONS]),
-    ?LOG("Proxy server listen on ~p : ~p~n", [ListenIP, ListenPort]),
+    {ok, {Ip,PortNum}} = inet:sockname(Socket),
+    put(sockname, {Ip,PortNum}),
+    ?LOG("Proxy server listen on ~p : ~p~n", [Ip, PortNum]),
     register(proxy_gate, self()),
     register(server, spawn(?MODULE, start_server, [])),
     accept(Socket).
