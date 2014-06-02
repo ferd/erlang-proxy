@@ -151,15 +151,29 @@ parse_port(Sock) ->
 
 parse_invalid_ip(Sock, Port) ->
     ?LOG("fake ip~n"),
-    {ok, <<0,0,0,Other>>} = gen_tcp:recv(Sock, 4),
-    true = Other =/= 0,
-    parse_user_id(Sock, Port, <<>>).
+    case gen_tcp:recv(Sock, 4) of
+        {ok, <<0,0,0,Other>>} -> % socks4a
+            true = Other =/= 0,
+            parse_user_id_4a(Sock, Port, <<>>);
+        {ok, <<A/big,B/big,C/big,D/big>>} ->
+            parse_user_id_4(Sock, Port, <<>>, {A,B,C,D})
+    end.
 
-parse_user_id(Sock, Port, UserId) ->
+parse_user_id_4a(Sock, Port, UserId) ->
     ?LOG("uid (iter)~n"),
     case gen_tcp:recv(Sock, 1) of
         {ok, <<0>>} -> parse_domain(Sock, Port, UserId, <<>>);
-        {ok, Byte} -> parse_user_id(Sock, Port, <<UserId/binary, Byte>>)
+        {ok, Byte} -> parse_user_id_4a(Sock, Port, <<UserId/binary, Byte>>)
+    end.
+
+parse_user_id_4(Sock, Port, UserId, {A,B,C,D}=Ip) ->
+    ?LOG("uid (iter)~n"),
+    case gen_tcp:recv(Sock, 1) of
+        {ok, <<0>>} -> 
+            Response = <<0,16#5a/big-integer,Port:16/big,A/big,B/big,C/big,D/big>>,
+            gen_tcp:send(Sock, Response),
+            communicate(Sock, Ip, Port);
+        {ok, Byte} -> parse_user_id_4(Sock, Port, <<UserId/binary, Byte>>, Ip)
     end.
 
 parse_domain(Sock, Port, UserId, Host) ->
