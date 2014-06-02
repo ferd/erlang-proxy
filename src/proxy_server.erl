@@ -36,15 +36,9 @@
 
 
 start() ->
-    ConfFile = filename:join(code:priv_dir(proxy_server), "server.conf"),
-    case file:consult(ConfFile) of
-        {ok, Conf} ->
-            ListenPort = proplists:get_value(listen_port, Conf),
-            ListenIP = proplists:get_value(listen_ip, Conf);
-        {error, _} ->
-            ListenPort = 8080,
-            ListenIP = {0,0,0,0}
-    end,
+    Conf = application:get_all_env(proxy_server),
+    ListenPort = proplists:get_value(listen_port, Conf, 0),
+    ListenIP = proplists:get_value(listen_ip, Conf, {0,0,0,0}),
     {ok, Socket} = gen_tcp:listen(ListenPort, [{ip, ListenIP} | ?SOCK_OPTIONS]),
     ?LOG("Proxy server listen on ~p : ~p~n", [ListenIP, ListenPort]),
     register(proxy_gate, self()),
